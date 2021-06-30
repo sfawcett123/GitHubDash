@@ -1,0 +1,76 @@
+name: Build and Deploy
+on:
+  repository_dispatch:
+  pull_request:
+    types: [assigned, opened, synchronize, reopened]
+  push:
+    branches:
+      - master
+env:
+  DOCKERHUB_REPOSITORY:  dfedigital/GitHubDash
+
+jobs:
+  build:
+    name: Build and push to DockerHub
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports: 
+          - 5000:5000
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v2
+        with:
+             fetch-depth: 0
+
+      - name: Lint Dockerfile
+        uses: brpaz/hadolint-action@master
+        with:
+             dockerfile: "Dockerfile"
+
+      - name: Get Short SHA
+        id: sha
+        run: echo ::set-output name=short::$(echo $GITHUB_SHA | cut -c -7)
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@master
+        with:
+          driver-opts: network=host  
+
+      - name: Cache Docker layers
+        uses: actions/cache@v2
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+             ${{ runner.os }}-buildx-
+             
+      - name: Login to Docker Hub
+        uses: docker/login-action@v1 
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PERSONAL_ACCESS_TOKEN }}
+        
+      - name: Build and push to Docker Hub
+        if: github.ref == 'refs/heads/master'
+        uses: docker/build-push-action@v2
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache
+          push: true
+          tags: |
+                 ${{env.DOCKERHUB_REPOSITORY}}:sha-${{ steps.sha.outputs.short }}
+
+      - name: Build and push to Docker Hub
+        if: github.ref != 'refs/heads/master'
+        uses: docker/build-push-action@v2
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache
+          push: false
+          tags: |
+                 ${{env.DOCKERHUB_REPOSITORY}}:sha-${{ steps.sha.outputs.short }}
